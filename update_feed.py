@@ -1,5 +1,6 @@
 import os
 import re
+import time
 from xml.etree import ElementTree as ET
 
 import requests
@@ -8,12 +9,14 @@ from bs4 import BeautifulSoup
 BOOK_URL = "https://novelping.com/book/martial-dao-i-can-enhance-my-talents"
 FEED_PATH = "feed.xml"
 
-DEFAULT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+REQUEST_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://novelping.com/",
     "Upgrade-Insecure-Requests": "1",
+    "DNT": "1",
+    "Connection": "keep-alive",
+    "Cache-Control": "no-cache",
 }
 
 
@@ -28,32 +31,37 @@ def normalize_url(href: str) -> str:
     return href
 
 
-def fetch_html(url: str) -> str:
-    try:
-        response = requests.get(
-            url,
-            timeout=20,
-            headers=DEFAULT_HEADERS,
-            allow_redirects=True,
-        )
-        if response.status_code == 403:
-            print(f"Skipping blocked page: {url} (HTTP 403)")
-            return ""
-        response.raise_for_status()
-        return response.text
-    except requests.RequestException as exc:
-        print(f"Request failed for {url}: {exc}")
-        return ""
+def fetch_html(url: str, max_retries: int = 3, backoff_seconds: float = 2.0) -> str:
+    session = requests.Session()
+    session.headers.update(REQUEST_HEADERS)
+
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = session.get(url, timeout=20, allow_redirects=True)
+            if response.status_code == 403:
+                print(f"WARNING: Received 403 for {url} on attempt {attempt}/{max_retries}")
+            response.raise_for_status()
+            return response.text
+        except requests.exceptions.RequestException as exc:
+            last_error = exc
+            if attempt < max_retries:
+                time.sleep(backoff_seconds * attempt)
+                continue
+
+    raise RuntimeError(f"Failed to fetch {url} after {max_retries} attempts") from last_error
 
 
 def extract_chapter_links(html: str):
     soup = BeautifulSoup(html, "html.parser")
     links = []
+    seen = set()
     for a_tag in soup.select("a[href]"):
         href = normalize_url(a_tag.get("href", ""))
-        if not href:
+        if not href or href in seen:
             continue
-        if "chapter-" in href and href not in links:
+        if "chapter" in href.lower() or "chapters" in href.lower() or "novel" in href.lower():
+            seen.add(href)
             links.append(href)
     return links
 
@@ -62,9 +70,6 @@ def extract_chapter_title(url: str):
     try:
         html = fetch_html(url)
     except Exception:
-        return None
-
-    if not html:
         return None
 
     soup = BeautifulSoup(html, "html.parser")
