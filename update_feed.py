@@ -8,6 +8,14 @@ from bs4 import BeautifulSoup
 BOOK_URL = "https://novelping.com/book/martial-dao-i-can-enhance-my-talents"
 FEED_PATH = "feed.xml"
 
+DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://novelping.com/",
+    "Upgrade-Insecure-Requests": "1",
+}
+
 
 def normalize_url(href: str) -> str:
     href = (href or "").strip()
@@ -21,9 +29,21 @@ def normalize_url(href: str) -> str:
 
 
 def fetch_html(url: str) -> str:
-    response = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"}, allow_redirects=True)
-    response.raise_for_status()
-    return response.text
+    try:
+        response = requests.get(
+            url,
+            timeout=20,
+            headers=DEFAULT_HEADERS,
+            allow_redirects=True,
+        )
+        if response.status_code == 403:
+            print(f"Skipping blocked page: {url} (HTTP 403)")
+            return ""
+        response.raise_for_status()
+        return response.text
+    except requests.RequestException as exc:
+        print(f"Request failed for {url}: {exc}")
+        return ""
 
 
 def extract_chapter_links(html: str):
@@ -42,6 +62,9 @@ def extract_chapter_title(url: str):
     try:
         html = fetch_html(url)
     except Exception:
+        return None
+
+    if not html:
         return None
 
     soup = BeautifulSoup(html, "html.parser")
